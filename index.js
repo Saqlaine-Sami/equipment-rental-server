@@ -303,6 +303,64 @@ app.get("/equipment/:id", verifyToken, verifyAnyUser, async (req, res) => {
   }
 });
 
+// Update Equipment (Owner নিজেরটা, Admin যেকোনোটা)
+app.put("/equipment/:id", verifyToken, verifyOwnerOrAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({ message: "invalid equipment id" });
+    }
+
+    const error = validateEquipment(req.body);
+    if (error) {
+      return res.status(400).send({ message: error });
+    }
+
+    const { equipment } = await getCollections();
+    const item = await equipment.findOne({ _id: new ObjectId(id) });
+
+    if (!item) {
+      return res.status(404).send({ message: "equipment not found" });
+    }
+    if (!canManageEquipment(req.user, item)) {
+      return res.status(403).send({ message: "forbidden access" });
+    }
+
+    const result = await equipment.updateOne(
+      { _id: item._id },
+      { $set: { ...buildEquipmentFields(req.body), updatedAt: new Date() } }
+    );
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
+// Delete Equipment (Owner নিজেরটা, Admin যেকোনোটা)
+app.delete("/equipment/:id", verifyToken, verifyOwnerOrAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({ message: "invalid equipment id" });
+    }
+
+    const { equipment } = await getCollections();
+    const item = await equipment.findOne({ _id: new ObjectId(id) });
+
+    if (!item) {
+      return res.status(404).send({ message: "equipment not found" });
+    }
+    if (!canManageEquipment(req.user, item)) {
+      return res.status(403).send({ message: "forbidden access" });
+    }
+
+    const result = await equipment.deleteOne({ _id: item._id });
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
 // ---------- Start ----------
 if (require.main === module) {
   app.listen(port, () => {
