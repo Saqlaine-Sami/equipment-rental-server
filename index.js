@@ -1000,6 +1000,76 @@ app.patch("/users/me", verifyToken, verifyAnyUser, async (req, res) => {
   }
 });
 
+// ---------- Admin: Users Routes ----------
+
+const USER_ROLES = ["customer", "owner", "admin"];
+
+// All Users (Admin)
+app.get("/admin/users", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { users } = await getCollections();
+    const result = await users.find().sort({ createdAt: -1 }).toArray();
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
+// Change Role (Admin)
+app.patch("/admin/users/:id/role", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { role } = req.body;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({ message: "invalid user id" });
+    }
+    if (!USER_ROLES.includes(role)) {
+      return res.status(400).send({ message: "invalid role" });
+    }
+    if (String(req.user._id) === id) {
+      return res.status(400).send({ message: "you cannot change your own role" });
+    }
+
+    const { users } = await getCollections();
+    const result = await users.updateOne({ _id: new ObjectId(id) }, { $set: { role } });
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({ message: "user not found" });
+    }
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
+// Manage Users: user মুছে ফেলা (Admin)
+app.delete("/admin/users/:id", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({ message: "invalid user id" });
+    }
+    if (String(req.user._id) === id) {
+      return res.status(400).send({ message: "you cannot delete your own account" });
+    }
+
+    const { users, favorites } = await getCollections();
+    const user = await users.findOne({ _id: new ObjectId(id) });
+
+    if (!user) {
+      return res.status(404).send({ message: "user not found" });
+    }
+
+    await favorites.deleteMany({ userEmail: user.email });
+    const result = await users.deleteOne({ _id: user._id });
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
 // ---------- Start ----------
 if (require.main === module) {
   app.listen(port, () => {
