@@ -558,6 +558,75 @@ app.get("/favorites/check/:equipmentId", verifyToken, verifyRenter, async (req, 
   }
 });
 
+// আমার Favorites (Dashboard টেবিলের জন্য, equipment-এর তথ্যসহ)
+app.get("/favorites", verifyToken, verifyRenter, async (req, res) => {
+  try {
+    const { favorites } = await getCollections();
+
+    const result = await favorites
+      .aggregate([
+        { $match: { userEmail: req.user.email } },
+        { $sort: { createdAt: -1 } },
+        {
+          $lookup: {
+            from: "equipment",
+            localField: "equipmentId",
+            foreignField: "_id",
+            as: "equipment",
+          },
+        },
+        { $unwind: "$equipment" }, // মুছে যাওয়া equipment বাদ পড়ে
+        { $match: { "equipment.status": "approved" } },
+        {
+          $project: {
+            _id: 1,
+            equipmentId: 1,
+            createdAt: 1,
+            equipment: {
+              _id: 1,
+              name: 1,
+              category: 1,
+              image: 1,
+              rentalPrice: 1,
+              rentalType: 1,
+              location: 1,
+              availableQuantity: 1,
+            },
+          },
+        },
+      ])
+      .toArray();
+
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
+// Favorite থেকে সরানো
+app.delete("/favorites/:equipmentId", verifyToken, verifyRenter, async (req, res) => {
+  try {
+    const { equipmentId } = req.params;
+
+    if (!ObjectId.isValid(equipmentId)) {
+      return res.status(400).send({ message: "invalid equipment id" });
+    }
+
+    const { favorites } = await getCollections();
+    const result = await favorites.deleteOne({
+      userEmail: req.user.email,
+      equipmentId: new ObjectId(equipmentId),
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).send({ message: "favorite not found" });
+    }
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
 // ---------- Start ----------
 if (require.main === module) {
   app.listen(port, () => {
