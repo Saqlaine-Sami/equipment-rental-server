@@ -1070,6 +1070,123 @@ app.delete("/admin/users/:id", verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
+// ---------- Analytics Routes (Challenge 3) ----------
+
+// শেষ n মাসের তালিকা, যেমন ["2026-06", ..., "2026-11"]
+const getLastMonths = (count) => {
+  const months = [];
+  const now = new Date();
+  for (let i = count - 1; i >= 0; i--) {
+    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    months.push(date.toISOString().slice(0, 7));
+  }
+  return months;
+};
+
+// Admin Analytics
+app.get("/admin/analytics", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    await markCompletedBookings();
+    const { users, equipment, bookings, payments } = await getCollections();
+
+    const months = getLastMonths(6);
+    const rangeStart = new Date(`${months[0]}-01T00:00:00.000Z`);
+
+    const [
+      totalUsers,
+      totalEquipment,
+      totalBookings,
+      pendingApprovals,
+      completedRentals,
+      revenueResult,
+      bookingsByMonth,
+    ] = await Promise.all([
+      users.countDocuments(),
+      equipment.countDocuments(),
+      bookings.countDocuments(),
+      equipment.countDocuments({ status: "pending" }),
+      bookings.countDocuments({ bookingStatus: "completed" }),
+      payments.aggregate([{ $group: { _id: null, total: { $sum: "$amount" } } }]).toArray(),
+      bookings
+        .aggregate([
+          { $match: { bookingDate: { $gte: rangeStart } } },
+          {
+            $group: {
+              _id: { $dateToString: { format: "%Y-%m", date: "$bookingDate" } },
+              count: { $sum: 1 },
+            },
+          },
+        ])
+        .toArray(),
+    ]);
+
+    const monthlyBookings = months.map((month) => {
+      const found = bookingsByMonth.find((item) => item._id === month);
+      return { month, bookings: found ? found.count : 0 };
+    });
+
+    res.send({
+      totalUsers,
+      totalEquipment,
+      totalBookings,
+      pendingApprovals,
+      completedRentals,
+      totalRevenue: revenueResult.length > 0 ? Math.round(revenueResult[0].total * 100) / 100 : 0,
+      monthlyBookings,
+    });
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
+// Owner Analytics
+app.get("/owner/analytics", verifyToken, verifyOwner, async (req, res) => {
+  try {
+    await markCompletedBookings();
+    const { equipment, bookings, payments } = await getCollections();
+    const email = req.user.email;
+
+    const months = getLastMonths(6);
+    const rangeStart = new Date(`${months[0]}-01T00:00:00.000Z`);
+
+    const [totalEquipment, completedRentals, earningsResult, earningsByMonth] = await Promise.all([
+      equipment.countDocuments({ "owner.email": email }),
+      bookings.countDocuments({ "owner.email": email, bookingStatus: "completed" }),
+      payments
+        .aggregate([
+          { $match: { ownerEmail: email } },
+          { $group: { _id: null, total: { $sum: "$amount" } } },
+        ])
+        .toArray(),
+      payments
+        .aggregate([
+          { $match: { ownerEmail: email, paidAt: { $gte: rangeStart } } },
+          {
+            $group: {
+              _id: { $dateToString: { format: "%Y-%m", date: "$paidAt" } },
+              total: { $sum: "$amount" },
+            },
+          },
+        ])
+        .toArray(),
+    ]);
+
+    const monthlyEarnings = months.map((month) => {
+      const found = earningsByMonth.find((item) => item._id === month);
+      return { month, earnings: found ? Math.round(found.total * 100) / 100 : 0 };
+    });
+
+    res.send({
+      totalEquipment,
+      completedRentals,
+      totalEarnings: earningsResult.length > 0 ? Math.round(earningsResult[0].total * 100) / 100 : 0,
+      monthlyEarnings,
+    });
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
 // ---------- Start ----------
 if (require.main === module) {
   app.listen(port, () => {
