@@ -800,6 +800,79 @@ app.post("/bookings", verifyToken, verifyRenter, async (req, res) => {
   }
 });
 
+// Payment সফল হলে Client এই route ডাকবে (success পেজ থেকে)
+app.post("/payments/confirm", verifyToken, verifyRenter, async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    if (!sessionId) {
+      return res.status(400).send({ message: "sessionId is required" });
+    }
+
+    // Stripe-কে সরাসরি জিজ্ঞেস: সত্যিই paid কিনা
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    if (session.payment_status !== "paid") {
+      return res.status(400).send({ message: "payment not completed" });
+    }
+
+    const bookingId = session.metadata && session.metadata.bookingId;
+    if (!bookingId || !ObjectId.isValid(bookingId)) {
+      return res.status(400).send({ message: "invalid payment session" });
+    }
+
+    const { bookings, payments } = await getCollections();
+    const transactionId = session.payment_intent;
+
+    // একবারই paid করা যাবে (দুইবার ডাকলেও payment দুইবার সেভ হবে না)
+    const updatedBooking = await bookings.findOneAndUpdate(
+      {
+        _id: new ObjectId(bookingId),
+        "customer.email": req.user.email,
+        paymentStatus: { $ne: "paid" },
+      },
+      {
+        $set: {
+          paymentStatus: "paid",
+          bookingStatus: "confirmed",
+          transactionId,
+          paidAt: new Date(),
+        },
+      },
+      { returnDocument: "after" }
+    );
+
+    if (!updatedBooking) {
+      // হয় আগেই paid হয়ে গেছে, নয়তো booking এই user-এর নয়
+      const existing = await bookings.findOne({
+        _id: new ObjectId(bookingId),
+        "customer.email": req.user.email,
+      });
+      if (existing && existing.paymentStatus === "paid") {
+        return res.send({ message: "already confirmed", booking: existing, transactionId });
+      }
+      return res.status(404).send({ message: "booking not found" });
+    }
+
+    // Transaction সেভ
+    await payments.insertOne({
+      bookingId: updatedBooking._id,
+      equipmentId: updatedBooking.equipmentId,
+      equipmentName: updatedBooking.equipmentName,
+      customerEmail: updatedBooking.customer.email,
+      ownerEmail: updatedBooking.owner.email,
+      amount: session.amount_total / 100,
+      currency: session.currency,
+      transactionId,
+      sessionId: session.id,
+      paymentStatus: "paid",
+      paidAt: new Date(),
+    });
+
+    res.send({ message: "payment confirmed", booking: updatedBooking, transactionId });
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
 // ---------- Start ----------
 if (require.main === module) {
   app.listen(port, () => {
