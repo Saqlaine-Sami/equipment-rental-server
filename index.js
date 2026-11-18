@@ -361,6 +361,45 @@ app.delete("/equipment/:id", verifyToken, verifyOwnerOrAdmin, async (req, res) =
   }
 });
 
+// All Equipment (Admin): সব status-এর equipment
+app.get("/admin/equipment", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { equipment } = await getCollections();
+    const result = await equipment.find().sort({ createdAt: -1 }).toArray();
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
+// Approve / Reject (Admin)
+app.patch("/admin/equipment/:id/status", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({ message: "invalid equipment id" });
+    }
+    if (!EQUIPMENT_STATUSES.includes(status)) {
+      return res.status(400).send({ message: "invalid status" });
+    }
+
+    const { equipment } = await getCollections();
+    const result = await equipment.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({ message: "equipment not found" });
+    }
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
 // ---------- Start ----------
 if (require.main === module) {
   app.listen(port, () => {
