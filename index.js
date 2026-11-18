@@ -469,6 +469,32 @@ app.get("/equipment", async (req, res) => {
   }
 });
 
+// Featured Equipment (Home): ৬টি approved equipment, MongoDB limit দিয়ে
+app.get("/featured-equipment", async (req, res) => {
+  try {
+    const { equipment } = await getCollections();
+    const result = await equipment
+      .find({ status: "approved" })
+      .sort({ createdAt: -1 })
+      .limit(6)
+      .toArray();
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
+// Customer Reviews (Home)
+app.get("/reviews", async (req, res) => {
+  try {
+    const { reviews } = await getCollections();
+    const result = await reviews.find().limit(12).toArray();
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
 // ---------- Start ----------
 if (require.main === module) {
   app.listen(port, () => {
