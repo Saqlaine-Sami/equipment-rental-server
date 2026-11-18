@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const jwt = require("jsonwebtoken");
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -46,6 +47,50 @@ async function getCollections() {
     reviews: database.collection("reviews"),
   };
 }
+
+// ---------- JWT & Role Middlewares ----------
+
+// ১. Token যাচাই: সঠিক token ছাড়া কেউ ঢুকতে পারবে না
+const verifyToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).send({ message: "unauthorized access" });
+    }
+    req.decoded = decoded; // এখানে { email } থাকবে
+    next();
+  });
+};
+
+// ২. Role যাচাই: database থেকে user-এর আসল role দেখে
+const verifyRole = (...allowedRoles) => {
+  return async (req, res, next) => {
+    try {
+      const { users } = await getCollections();
+      const user = await users.findOne({ email: req.decoded.email });
+
+      if (!user || !allowedRoles.includes(user.role)) {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+
+      req.user = user;
+      next();
+    } catch (error) {
+      res.status(500).send({ message: error.message });
+    }
+  };
+};
+
+const verifyRenter = verifyRole("customer");
+const verifyOwner = verifyRole("owner");
+const verifyAdmin = verifyRole("admin");
 
 // ---------- Routes ----------
 app.get("/", (req, res) => {
