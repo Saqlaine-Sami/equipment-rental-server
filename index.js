@@ -267,6 +267,42 @@ app.post("/equipment", verifyToken, verifyOwner, async (req, res) => {
   }
 });
 
+// My Equipment (Owner): নিজের equipment-এর তালিকা
+app.get("/my-equipment", verifyToken, verifyOwner, async (req, res) => {
+  try {
+    const { equipment } = await getCollections();
+    const result = await equipment
+      .find({ "owner.email": req.user.email })
+      .sort({ createdAt: -1 })
+      .toArray();
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
+// Equipment Details (logged-in সবাই)
+app.get("/equipment/:id", verifyToken, verifyAnyUser, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({ message: "invalid equipment id" });
+    }
+
+    const { equipment } = await getCollections();
+    const item = await equipment.findOne({ _id: new ObjectId(id) });
+
+    // Approved না হলে শুধু মালিক বা Admin দেখতে পারবে
+    if (!item || (item.status !== "approved" && !canManageEquipment(req.user, item))) {
+      return res.status(404).send({ message: "equipment not found" });
+    }
+
+    res.send(item);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
 // ---------- Start ----------
 if (require.main === module) {
   app.listen(port, () => {
