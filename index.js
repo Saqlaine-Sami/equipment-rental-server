@@ -673,6 +673,133 @@ const getAvailableUnits = async (item, start, end) => {
   return item.availableQuantity - booked;
 };
 
+// ---------- Booking & Payment Routes (Customer) ----------
+
+// Booking তৈরি করে Stripe Checkout লিংক ফেরত দেয়
+app.post("/bookings", verifyToken, verifyRenter, async (req, res) => {
+  try {
+    const { equipmentId, startDate, endDate, quantity, contactNumber, deliveryAddress, notes } = req.body;
+
+    // --- যাচাই ---
+    if (!equipmentId || !ObjectId.isValid(equipmentId)) {
+      return res.status(400).send({ message: "valid equipmentId is required" });
+    }
+
+    const start = parseDateOnly(startDate);
+    const end = parseDateOnly(endDate);
+    if (!start || !end) {
+      return res.status(400).send({ message: "valid startDate and endDate (YYYY-MM-DD) are required" });
+    }
+
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    if (start < today) {
+      return res.status(400).send({ message: "start date cannot be in the past" });
+    }
+    if (end < start) {
+      return res.status(400).send({ message: "end date cannot be before start date" });
+    }
+
+    const qty = Number(quantity);
+    if (!Number.isInteger(qty) || qty < 1) {
+      return res.status(400).send({ message: "quantity must be a whole number (1 or more)" });
+    }
+    if (!contactNumber || !String(contactNumber).trim()) {
+      return res.status(400).send({ message: "contactNumber is required" });
+    }
+    if (!deliveryAddress || !String(deliveryAddress).trim()) {
+      return res.status(400).send({ message: "deliveryAddress is required" });
+    }
+
+    const { equipment, bookings } = await getCollections();
+
+    const item = await equipment.findOne({ _id: new ObjectId(equipmentId), status: "approved" });
+    if (!item) {
+      return res.status(404).send({ message: "equipment not found" });
+    }
+
+    // --- Availability ---
+    const availableUnits = await getAvailableUnits(item, start, end);
+    if (qty > availableUnits) {
+      return res.status(400).send({
+        message:
+          availableUnits > 0
+            ? `only ${availableUnits} unit(s) available for the selected dates`
+            : "equipment is not available for the selected dates",
+      });
+    }
+
+    // --- মোট দাম ---
+    const { days, totalAmount } = calculateTotal(item, start, end, qty);
+
+    // --- Booking সেভ (payment এখনো pending) ---
+    const booking = {
+      equipmentId: item._id,
+      equipmentName: item.name,
+      equipmentImage: item.image,
+      customer: {
+        name: req.user.name,
+        email: req.user.email,
+        photo: req.user.photo,
+      },
+      owner: item.owner,
+      startDate: start,
+      endDate: end,
+      days,
+      quantity: qty,
+      rentalType: item.rentalType,
+      unitPrice: item.rentalPrice,
+      totalAmount,
+      contactNumber: String(contactNumber).trim(),
+      deliveryAddress: String(deliveryAddress).trim(),
+      notes: notes ? String(notes).trim() : "",
+      paymentStatus: "pending",
+      bookingStatus: "pending",
+      bookingDate: new Date(),
+    };
+    const inserted = await bookings.insertOne(booking);
+
+    // --- Stripe Checkout Session ---
+    let session;
+    try {
+      session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        customer_email: req.user.email,
+        line_items: [
+          {
+            quantity: 1,
+            price_data: {
+              currency: "usd",
+              unit_amount: Math.round(totalAmount * 100), // cent-এ
+              product_data: {
+                name: `${item.name} (${qty} unit, ${days} day)`,
+              },
+            },
+          },
+        ],
+        metadata: {
+          bookingId: String(inserted.insertedId),
+          userEmail: req.user.email,
+        },
+        success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.CLIENT_URL}/equipment/${item._id}`,
+      });
+    } catch (stripeError) {
+      // Stripe ব্যর্থ হলে অসম্পূর্ণ booking মুছে দিই
+      await bookings.deleteOne({ _id: inserted.insertedId });
+      throw stripeError;
+    }
+
+    res.status(201).send({
+      bookingId: inserted.insertedId,
+      totalAmount,
+      checkoutUrl: session.url,
+    });
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
 // ---------- Start ----------
 if (require.main === module) {
   app.listen(port, () => {
