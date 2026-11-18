@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const jwt = require("jsonwebtoken");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -626,6 +627,51 @@ app.delete("/favorites/:equipmentId", verifyToken, verifyRenter, async (req, res
     res.status(500).send({ message: error.message });
   }
 });
+
+// ---------- Booking Helpers ----------
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// "2026-11-25" ফরম্যাটের তারিখ যাচাই করে Date বানায়
+const parseDateOnly = (value) => {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return isNaN(date.getTime()) ? null : date;
+};
+
+// মোট ভাড়া হিসাব (শুরু ও শেষ দিন দুটোই গোনা হয়)
+const calculateTotal = (item, start, end, quantity) => {
+  const days = Math.round((end - start) / MS_PER_DAY) + 1;
+
+  let periods = days;
+  if (item.rentalType === "Weekly") periods = Math.ceil(days / 7);
+  if (item.rentalType === "Monthly") periods = Math.ceil(days / 30);
+
+  const totalAmount = Math.round(periods * item.rentalPrice * quantity * 100) / 100;
+  return { days, periods, totalAmount };
+};
+
+// নির্বাচিত তারিখে কতগুলো unit খালি আছে
+const getAvailableUnits = async (item, start, end) => {
+  const { bookings } = await getCollections();
+
+  const result = await bookings
+    .aggregate([
+      {
+        $match: {
+          equipmentId: item._id,
+          paymentStatus: "paid",
+          startDate: { $lte: end },
+          endDate: { $gte: start },
+        },
+      },
+      { $group: { _id: null, booked: { $sum: "$quantity" } } },
+    ])
+    .toArray();
+
+  const booked = result.length > 0 ? result[0].booked : 0;
+  return item.availableQuantity - booked;
+};
 
 // ---------- Start ----------
 if (require.main === module) {
