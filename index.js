@@ -873,6 +873,73 @@ app.post("/payments/confirm", verifyToken, verifyRenter, async (req, res) => {
   }
 });
 
+// ---------- Rentals Routes ----------
+
+// শেষ তারিখ পেরিয়ে গেলে paid booking-কে "completed" করে
+const markCompletedBookings = async () => {
+  const { bookings } = await getCollections();
+
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+
+  await bookings.updateMany(
+    {
+      paymentStatus: "paid",
+      bookingStatus: "confirmed",
+      endDate: { $lt: today },
+    },
+    { $set: { bookingStatus: "completed" } }
+  );
+};
+
+// My Rentals (Customer): নিজের সব booking
+app.get("/my-rentals", verifyToken, verifyRenter, async (req, res) => {
+  try {
+    await markCompletedBookings();
+
+    const { bookings } = await getCollections();
+    const result = await bookings
+      .find({ "customer.email": req.user.email })
+      .sort({ bookingDate: -1 })
+      .toArray();
+
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
+// My Equipment Rental (Owner): নিজের equipment-এর সব booking
+app.get("/owner/rentals", verifyToken, verifyOwner, async (req, res) => {
+  try {
+    await markCompletedBookings();
+
+    const { bookings } = await getCollections();
+    const result = await bookings
+      .find({ "owner.email": req.user.email })
+      .sort({ bookingDate: -1 })
+      .toArray();
+
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
+// All Rentals (Admin): প্ল্যাটফর্মের সব booking
+app.get("/admin/rentals", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    await markCompletedBookings();
+
+    const { bookings } = await getCollections();
+    const result = await bookings.find().sort({ bookingDate: -1 }).toArray();
+
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
 // ---------- Start ----------
 if (require.main === module) {
   app.listen(port, () => {
