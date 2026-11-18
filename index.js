@@ -91,6 +91,8 @@ const verifyRole = (...allowedRoles) => {
 const verifyRenter = verifyRole("customer");
 const verifyOwner = verifyRole("owner");
 const verifyAdmin = verifyRole("admin");
+const verifyOwnerOrAdmin = verifyRole("owner", "admin");
+const verifyAnyUser = verifyRole("customer", "owner", "admin");
 
 // ---------- Routes ----------
 app.get("/", (req, res) => {
@@ -176,6 +178,90 @@ app.get("/users/me", verifyToken, async (req, res) => {
     }
 
     res.send(user);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
+// ---------- Equipment Routes ----------
+
+const EQUIPMENT_CATEGORIES = [
+  "Construction Equipment",
+  "Photography Equipment",
+  "Vehicles & Transportation",
+  "Agriculture Equipment",
+  "Electronics",
+  "Event Equipment",
+];
+const RENTAL_TYPES = ["Daily", "Weekly", "Monthly"];
+const EQUIPMENT_STATUSES = ["pending", "approved", "rejected"];
+
+// ফর্মের তথ্য ঠিক আছে কিনা দেখে। ভুল থাকলে error message ফেরত দেয়
+const validateEquipment = (data) => {
+  const required = [
+    "name", "description", "category", "location", "rentalPrice",
+    "rentalType", "availableQuantity", "condition", "brand",
+    "model", "image", "terms",
+  ];
+
+  for (const field of required) {
+    if (data[field] === undefined || data[field] === null || String(data[field]).trim() === "") {
+      return `${field} is required`;
+    }
+  }
+  if (!EQUIPMENT_CATEGORIES.includes(data.category)) return "invalid category";
+  if (!RENTAL_TYPES.includes(data.rentalType)) return "invalid rental type";
+  if (!(Number(data.rentalPrice) > 0)) return "rentalPrice must be greater than 0";
+  if (!Number.isInteger(Number(data.availableQuantity)) || Number(data.availableQuantity) < 0) {
+    return "availableQuantity must be a whole number (0 or more)";
+  }
+  return null;
+};
+
+// শুধু অনুমোদিত field নেয়। status বা owner request থেকে নেওয়া হয় না
+const buildEquipmentFields = (d) => ({
+  name: String(d.name).trim(),
+  description: String(d.description).trim(),
+  category: d.category,
+  location: String(d.location).trim(),
+  rentalPrice: Number(d.rentalPrice),
+  rentalType: d.rentalType,
+  availableQuantity: Number(d.availableQuantity),
+  condition: String(d.condition).trim(),
+  brand: String(d.brand).trim(),
+  model: String(d.model).trim(),
+  image: String(d.image).trim(),
+  terms: String(d.terms).trim(),
+});
+
+// Admin সব equipment পারে, Owner শুধু নিজেরটা
+const canManageEquipment = (user, item) =>
+  user.role === "admin" || item.owner.email === user.email;
+
+// Add Equipment (Owner)
+app.post("/equipment", verifyToken, verifyOwner, async (req, res) => {
+  try {
+    const error = validateEquipment(req.body);
+    if (error) {
+      return res.status(400).send({ message: error });
+    }
+
+    const { equipment } = await getCollections();
+
+    const newEquipment = {
+      ...buildEquipmentFields(req.body),
+      status: "pending",
+      owner: {
+        name: req.user.name,
+        email: req.user.email,
+        photo: req.user.photo,
+        phone: req.user.phone,
+      },
+      createdAt: new Date(),
+    };
+
+    const result = await equipment.insertOne(newEquipment);
+    res.status(201).send(result);
   } catch (error) {
     res.status(500).send({ message: error.message });
   }
