@@ -108,6 +108,79 @@ app.get("/health", async (req, res) => {
   }
 });
 
+// ---------- Users & Auth Routes ----------
+
+// নতুন user সেভ (Register ও Google login দুটোতেই ব্যবহার হবে)
+app.post("/users", async (req, res) => {
+  try {
+    const { name, email, photo } = req.body;
+
+    if (!email) {
+      return res.status(400).send({ message: "email is required" });
+    }
+
+    const { users } = await getCollections();
+
+    const existingUser = await users.findOne({ email });
+    if (existingUser) {
+      return res.send({ message: "user already exists", insertedId: null });
+    }
+
+    const newUser = {
+      name: name || "",
+      email,
+      photo: photo || "",
+      phone: "",
+      address: "",
+      role: "customer", // সবসময় customer, request থেকে role নেওয়া হবে না
+      createdAt: new Date(),
+    };
+
+    const result = await users.insertOne(newUser);
+    res.status(201).send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
+// JWT token তৈরি (login সফল হলে Client এটা ডাকবে)
+app.post("/jwt", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const { users } = await getCollections();
+    const user = await users.findOne({ email });
+
+    if (!user) {
+      return res.status(404).send({ message: "user not found" });
+    }
+
+    const token = jwt.sign({ email }, process.env.JWT_SECRET, {
+      expiresIn: "7d",
+    });
+
+    res.send({ token });
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
+// বর্তমান logged-in user-এর তথ্য ও role
+app.get("/users/me", verifyToken, async (req, res) => {
+  try {
+    const { users } = await getCollections();
+    const user = await users.findOne({ email: req.decoded.email });
+
+    if (!user) {
+      return res.status(404).send({ message: "user not found" });
+    }
+
+    res.send(user);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
 // ---------- Start ----------
 if (require.main === module) {
   app.listen(port, () => {
