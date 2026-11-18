@@ -940,6 +940,66 @@ app.get("/admin/rentals", verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
+// ---------- Profile Route ----------
+
+// Profile আপডেট (Customer, Owner, Admin সবাই)
+app.patch("/users/me", verifyToken, verifyAnyUser, async (req, res) => {
+  try {
+    const { name, photo, phone, address } = req.body;
+    const updates = {};
+
+    if (name !== undefined) {
+      if (!String(name).trim()) {
+        return res.status(400).send({ message: "name cannot be empty" });
+      }
+      updates.name = String(name).trim();
+    }
+
+    if (photo !== undefined) {
+      const photoUrl = String(photo).trim();
+      if (photoUrl && !/^https?:\/\//i.test(photoUrl)) {
+        return res.status(400).send({ message: "photo must be a valid image link" });
+      }
+      updates.photo = photoUrl;
+    }
+
+    if (phone !== undefined) updates.phone = String(phone).trim();
+    if (address !== undefined) updates.address = String(address).trim();
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).send({ message: "nothing to update" });
+    }
+
+    const { users, equipment, bookings } = await getCollections();
+    await users.updateOne({ email: req.user.email }, { $set: updates });
+
+    // অন্য জায়গায় রাখা কপিগুলোও নতুন করে দেওয়া
+    const copyFields = (prefix, keys) => {
+      const fields = {};
+      keys.forEach((key) => {
+        if (updates[key] !== undefined) fields[`${prefix}.${key}`] = updates[key];
+      });
+      return fields;
+    };
+
+    const ownerFields = copyFields("owner", ["name", "photo", "phone"]);
+    const customerFields = copyFields("customer", ["name", "photo"]);
+
+    if (Object.keys(ownerFields).length > 0) {
+      await equipment.updateMany({ "owner.email": req.user.email }, { $set: ownerFields });
+      await bookings.updateMany({ "owner.email": req.user.email }, { $set: ownerFields });
+    }
+    if (Object.keys(customerFields).length > 0) {
+      await bookings.updateMany({ "customer.email": req.user.email }, { $set: customerFields });
+    }
+
+    const updatedUser = await users.findOne({ email: req.user.email });
+    res.send(updatedUser);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
 // ---------- Start ----------
 if (require.main === module) {
   app.listen(port, () => {
