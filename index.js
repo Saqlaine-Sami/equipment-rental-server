@@ -495,6 +495,69 @@ app.get("/reviews", async (req, res) => {
   }
 });
 
+// ---------- Favorites Routes (Customer) ----------
+
+// Favorite-এ যোগ করা
+app.post("/favorites", verifyToken, verifyRenter, async (req, res) => {
+  try {
+    const { equipmentId } = req.body;
+
+    if (!equipmentId || !ObjectId.isValid(equipmentId)) {
+      return res.status(400).send({ message: "valid equipmentId is required" });
+    }
+
+    const { equipment, favorites } = await getCollections();
+
+    // শুধু approved equipment favorite করা যাবে
+    const item = await equipment.findOne({
+      _id: new ObjectId(equipmentId),
+      status: "approved",
+    });
+    if (!item) {
+      return res.status(404).send({ message: "equipment not found" });
+    }
+
+    // আগেই যোগ করা থাকলে আবার নয়
+    const existing = await favorites.findOne({
+      userEmail: req.user.email,
+      equipmentId: item._id,
+    });
+    if (existing) {
+      return res.status(409).send({ message: "already in favorites" });
+    }
+
+    const result = await favorites.insertOne({
+      userEmail: req.user.email,
+      equipmentId: item._id,
+      createdAt: new Date(),
+    });
+    res.status(201).send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
+// এই equipment favorite করা আছে কিনা (Details পেজের বাটনের জন্য)
+app.get("/favorites/check/:equipmentId", verifyToken, verifyRenter, async (req, res) => {
+  try {
+    const { equipmentId } = req.params;
+
+    if (!ObjectId.isValid(equipmentId)) {
+      return res.status(400).send({ message: "invalid equipment id" });
+    }
+
+    const { favorites } = await getCollections();
+    const existing = await favorites.findOne({
+      userEmail: req.user.email,
+      equipmentId: new ObjectId(equipmentId),
+    });
+
+    res.send({ isFavorite: Boolean(existing) });
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
 // ---------- Start ----------
 if (require.main === module) {
   app.listen(port, () => {
