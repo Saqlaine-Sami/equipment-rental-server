@@ -400,6 +400,75 @@ app.patch("/admin/equipment/:id/status", verifyToken, verifyAdmin, async (req, r
   }
 });
 
+// ---------- Public Equipment Routes ----------
+
+// Search text-এর বিশেষ চিহ্ন নিরাপদ করার helper
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// All Equipment (public): শুধু approved, server-side search/filter/sort
+app.get("/equipment", async (req, res) => {
+  try {
+    const { search, category, rentalType, minPrice, maxPrice, availability, sort } = req.query;
+
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 9, 1), 50);
+
+    // শুধু approved equipment দেখা যাবে
+    const query = { status: "approved" };
+
+    // Search: নাম, location বা category-র যেকোনোটাতে মিললেই হবে
+    if (search && String(search).trim()) {
+      const regex = new RegExp(escapeRegex(String(search).trim()), "i");
+      query.$or = [{ name: regex }, { location: regex }, { category: regex }];
+    }
+
+    // Filters
+    if (category) query.category = String(category);
+    if (rentalType) query.rentalType = String(rentalType);
+
+    // Price range
+    const priceFilter = {};
+    if (minPrice !== undefined && minPrice !== "" && !isNaN(Number(minPrice))) {
+      priceFilter.$gte = Number(minPrice);
+    }
+    if (maxPrice !== undefined && maxPrice !== "" && !isNaN(Number(maxPrice))) {
+      priceFilter.$lte = Number(maxPrice);
+    }
+    if (Object.keys(priceFilter).length > 0) query.rentalPrice = priceFilter;
+
+    // Availability
+    if (availability === "available") query.availableQuantity = { $gt: 0 };
+    if (availability === "unavailable") query.availableQuantity = 0;
+
+    // Sorting
+    const sortOptions = {
+      price_asc: { rentalPrice: 1 },
+      price_desc: { rentalPrice: -1 },
+      newest: { createdAt: -1 },
+    };
+    const sortBy = { ...(sortOptions[sort] || sortOptions.newest), _id: 1 };
+
+    const { equipment } = await getCollections();
+    const total = await equipment.countDocuments(query);
+    const items = await equipment
+      .find(query)
+      .sort(sortBy)
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .toArray();
+
+    res.send({
+      items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    });
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
 // ---------- Start ----------
 if (require.main === module) {
   app.listen(port, () => {
