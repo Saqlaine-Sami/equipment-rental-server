@@ -1187,6 +1187,41 @@ app.get("/owner/analytics", verifyToken, verifyOwner, async (req, res) => {
   }
 });
 
+// Popular Equipment (Home): সবচেয়ে বেশি paid booking পাওয়া ৪টি approved equipment
+app.get("/popular-equipment", async (req, res) => {
+  try {
+    const { bookings } = await getCollections();
+
+    const result = await bookings
+      .aggregate([
+        { $match: { paymentStatus: "paid" } },
+        { $group: { _id: "$equipmentId", totalBookings: { $sum: 1 } } },
+        { $sort: { totalBookings: -1, _id: 1 } },
+        {
+          $lookup: {
+            from: "equipment",
+            localField: "_id",
+            foreignField: "_id",
+            as: "equipment",
+          },
+        },
+        { $unwind: "$equipment" },
+        { $match: { "equipment.status": "approved" } },
+        { $limit: 4 },
+        {
+          $replaceRoot: {
+            newRoot: { $mergeObjects: ["$equipment", { totalBookings: "$totalBookings" }] },
+          },
+        },
+      ])
+      .toArray();
+
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: error.message });
+  }
+});
+
 // ---------- Start ----------
 if (require.main === module) {
   app.listen(port, () => {
